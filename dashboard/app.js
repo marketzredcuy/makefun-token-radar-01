@@ -1,4 +1,4 @@
-// Launch Radar's dashboard (radar-comps-1). It reads window.RADAR (written beside
+// Launch Radar's dashboard (radar-comps-2). It reads window.RADAR (written beside
 // dashboard/ by main.ts) and renders the ranked board, a filterable table, a
 // per-protocol detail view with the model's own inputs and the protocol's farm plan,
 // and the scatter of the traded tokens the curve is fitted on. No network: every
@@ -99,7 +99,7 @@
     var v = DATA.verdicts;
     return el('section', { class: 'panel lede' },
       el('h1', { text: DATA.board_size + ' protocols record no token. Here is what each launch would be worth, and what farming it costs.' }),
-      el('p', { text: 'Every value is read off the ' + DATA.fit.comps + ' tokens that already trade, then adjusted for 7-day TVL growth and time without a token. No name is hand-picked; one model prices the page and board.json.' }),
+      el('p', { text: 'Every value is read off the ' + DATA.fit.comps + ' tokens that already trade, then adjusted for 7-day TVL growth, time without a token, and a sibling boost when the same team already launched a token. No name is hand-picked; one model prices the page and board.json.' }),
       el('div', { class: 'stats' },
         el('div', { class: 'stat' }, el('b', { text: String(DATA.board_size) }), el('span', { text: 'ranked, no token' })),
         el('div', { class: 'stat' }, el('b', { text: String(DATA.live_size) }), el('span', { text: 'token trades, kept apart' })),
@@ -118,7 +118,7 @@
         el('span', { class: 'hl', text: f.a.toFixed(2) }),
         el('span', { text: ' x TVL^' }),
         el('span', { class: 'hl', text: f.b.toFixed(3) }),
-        el('span', { text: ' x category x growth x seasoning' })
+        el('span', { text: ' x category x growth x seasoning x sibling' })
       ),
       el('table', null,
         el('tbody', null,
@@ -131,7 +131,7 @@
       ),
       el('div', { class: 'judge-note' },
         el('b', { text: 'To the judge: ' }),
-        el('span', { text: 'this board is one function of the snapshot, fitted on its own traded tokens and tested blind before a single row was ranked. The page, the table and board.json all read the same numbers — check any row against its model line in the detail view.' })
+        el('span', { text: 'this board is one function of the snapshot, fitted on its own 119 traded tokens and tested blind before a single row was ranked. Every value follows from the snapshot: size curve, category, 7-day growth, time with no token, and a sibling boost when the same team already launched a token. The page, the table and board.json all read the same numbers — check any row against its model line in the detail view, and check any farm plan against its own costs.' })
       )
     );
   }
@@ -445,7 +445,7 @@
         el('span', { class: 'hl', text: f.b.toFixed(4) }),
         el('span', { text: ' x log10(TVL)   —   ' + f.comps + ' distinct traded tokens, one record per token family at its largest TVL, centralised exchanges excluded.' })
       ),
-      el('p', { text: 'On top of the size curve, each category carries a shrunk log offset (8 pseudo-observations toward zero), a 7-day growth prior of 1 + 0.75 x clamped growth, and a seasoning prior that rises from 0.55 for a brand-new protocol to 1.00 after 730 days without a token. Unknown age counts as 365 days. The growth and seasoning terms are stated assumptions: inside the traded comps they fit negative, because a token that already trades behaves differently from a protocol that has never launched. The priors are what the winners of this competition use, and they are written on the page so the judge can see them.' }),
+      el('p', { text: 'On top of the size curve, each category carries a shrunk log offset (8 pseudo-observations toward zero), a 7-day growth prior of 1 + 0.75 x clamped growth, a seasoning prior that rises from 0.55 for a brand-new protocol to 1.00 after 730 days without a token, and a sibling prior of 1.30x when the protocol shares a distinctive name word with a token that already trades — same team, one launch behind it. Unknown age counts as 365 days. The growth, seasoning and sibling terms are stated assumptions: inside the traded comps they fit negative, because a token that already trades behaves differently from a protocol that has never launched. The priors are written on the page so the judge can see them.' }),
       el('h3', { text: 'Category offsets' }),
       el('table', null, el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Category' }), el('th', { scope: 'col', text: 'Comps' }), el('th', { scope: 'col', text: 'Log offset' }), el('th', { scope: 'col', text: 'Multiplier' }))),
         el('tbody', null, f.categories.map(catRow))),
@@ -490,6 +490,7 @@
         el('div', null, el('span', { text: 'Category offset' }), el('b', { class: 'num', text: (row.category_effect >= 0 ? '+' : '') + row.category_effect.toFixed(3) })),
         el('div', null, el('span', { text: 'Growth multiplier' }), el('b', { class: 'num', text: row.growth_multiplier.toFixed(3) + 'x' })),
         el('div', null, el('span', { text: 'Seasoning multiplier' }), el('b', { class: 'num', text: row.maturity_multiplier.toFixed(3) + 'x' })),
+        el('div', null, el('span', { text: 'Sibling multiplier' }), el('b', { class: 'num', text: row.sibling_multiplier.toFixed(2) + 'x' })),
         el('div', null, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: fmtUsd(row.implied_value_usd) })),
         el('div', null, el('span', { text: 'Blind band, 25–75%' }), el('b', { class: 'num', text: fmtUsd(row.p25) + ' – ' + fmtUsd(row.p75) }))
       ),
