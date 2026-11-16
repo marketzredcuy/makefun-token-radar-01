@@ -1,4 +1,4 @@
-// The token radar's model: radar-comps-2.
+// The token radar's model: radar-comps-3.
 //
 // One snapshot of the protocol universe in, one ranked board out. The value model is
 // fitted from the snapshot itself at runtime: a size curve over the traded tokens
@@ -17,8 +17,10 @@
 // Farm economics are netted to the dollar on a $1,000 plan: the slice is what $1,000
 // deposited would take if 10% of the launch went to depositors pro rata; gas is
 // charged on the protocol's cheapest chain; the opportunity cost is a 4% T-bill on
-// the capital over the hold. FARM pays after fees and the T-bill, THIN beats its
-// fees only, SKIP never beats its fees.
+// the capital over the hold. ROBUST pays even at the band's low end (P25), FARM pays
+// at the median, THIN beats its fees only, SKIP never beats its fees. Break-even
+// odds are the chance the launch is worth enough for the farm to break even,
+// read off the band: the implied value the farm needs, against the band's own spread.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -44,7 +46,7 @@ export interface Snapshot {
 }
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-comps-2';
+export const MODEL_VERSION = 'radar-comps-3';
 
 /** Sibling prior: a protocol that shares a distinctive name word with a token that
  *  already trades gets a 1.30x multiplier — same team, one launch behind it. */
@@ -126,10 +128,16 @@ export interface FarmEconomics {
   oppCost: number;
   net: number;
   netPerHour: number;
-  verdict: 'FARM' | 'THIN' | 'SKIP';
+  verdict: 'ROBUST' | 'FARM' | 'THIN' | 'SKIP';
   holdDays: number;
   chain: string;
   hours: number;
+  /** The implied value the farm needs to break even, in USD. */
+  breakEvenValue: number;
+  /** The chance the launch is worth at least the break-even value, 0..1, from the band. */
+  breakEvenOdds: number;
+  /** The net if the launch lands at the band's low end (P25), in USD. */
+  netAtP25: number;
 }
 
 /** One row of board.json: the ranked board's row. */
@@ -186,9 +194,12 @@ export interface RadarRow {
   net: number;
   netPerHour: number;
   hours: number;
-  verdict: 'FARM' | 'THIN' | 'SKIP';
+  verdict: 'ROBUST' | 'FARM' | 'THIN' | 'SKIP';
   holdDays: number;
   chain: string;
+  breakEvenValue: number;
+  breakEvenOdds: number;
+  netAtP25: number;
   farm_steps: string[];
 }
 
@@ -225,7 +236,7 @@ export interface RadarData {
   sibling_size: number;
   live_size: number;
   setaside_size: number;
-  verdicts: { FARM: number; THIN: number; SKIP: number };
+  verdicts: { ROBUST: number; FARM: number; THIN: number; SKIP: number };
   bestPerHour: { slug: string; name: string; netPerHour: number; verdict: string }[];
   rows: RadarRow[];
   live: LiveRow[];
@@ -544,8 +555,16 @@ function holdDaysFor(age: number | null): number {
   return 30;
 }
 
+/** Standard normal CDF (Abramowitz-Stegun 7.1.26, |error| < 1.5e-7). */
+function normCdf(x: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989423 * Math.exp(-x * x / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return x > 0 ? 1 - p : p;
+}
+
 /** One row's farm economics on a $1,000 plan, netted to the dollar. */
-export function farmEconomics(p: SnapshotProtocol, implied: number, age: number | null): FarmEconomics {
+export function farmEconomics(p: SnapshotProtocol, implied: number, age: number | null, band: { p25: number; p75: number }): FarmEconomics {
   const slice1k = (1000 / p.tvl_usd) * SLICE_SHARE * implied;
   const { chain, gas: gasPerTx } = cheapestChain(p);
   const gas = gasPerTx * FARM_TXS;
@@ -554,8 +573,18 @@ export function farmEconomics(p: SnapshotProtocol, implied: number, age: number 
   const hours = 0.25 + 0.17 * (holdDays / 7) + 0.17;
   const net = slice1k - gas - oppCost;
   const netPerHour = net / hours;
-  const verdict: 'FARM' | 'THIN' | 'SKIP' = net > 0 ? 'FARM' : slice1k > gas ? 'THIN' : 'SKIP';
-  return { slice1k, gas, oppCost, net, netPerHour, verdict, holdDays, chain, hours };
+  // The launch value the farm needs to break even: the slice must cover gas + T-bill.
+  const breakEvenValue = Math.max(1, Math.round(((gas + oppCost) * p.tvl_usd) / (1000 * SLICE_SHARE)));
+  // The band is lognormal around the point estimate: P25/P75 sit at +/-0.6745 sigma.
+  const sigma = (Math.log10(band.p75) - Math.log10(band.p25)) / (2 * 0.6745);
+  const z = sigma > 0 ? (Math.log10(breakEvenValue) - Math.log10(Math.max(1, implied))) / sigma : 0;
+  const breakEvenOdds = Math.min(0.99, Math.max(0.01, 1 - normCdf(z)));
+  // The net if the launch lands at the band's low end: a farm that pays there is robust.
+  const sliceAtP25 = (1000 / p.tvl_usd) * SLICE_SHARE * implied * band.p25;
+  const netAtP25 = sliceAtP25 - gas - oppCost;
+  const verdict: 'ROBUST' | 'FARM' | 'THIN' | 'SKIP' =
+    netAtP25 > 0 ? 'ROBUST' : net > 0 ? 'FARM' : slice1k > gas ? 'THIN' : 'SKIP';
+  return { slice1k, gas, oppCost, net, netPerHour, verdict, holdDays, chain, hours, breakEvenValue, breakEvenOdds, netAtP25 };
 }
 
 /** A step as one string: its action, then its cost and time, within the gate's 20..600 characters. */
@@ -619,7 +648,7 @@ export function farmSteps(p: SnapshotProtocol, econ: FarmEconomics, capital: num
       time: '10 minutes a week',
     },
     {
-      text: `Hold the position for at least ${econ.holdDays} days so the activity is counted in more than one snapshot. At $${capital} the plan nets about $${net} after gas and a 4% T-bill, about $${perHour} an hour.`,
+      text: `Hold the position for at least ${econ.holdDays} days so the activity is counted in more than one snapshot. At $${capital} the plan nets about $${net} after gas and a 4% T-bill, about $${perHour} an hour. Break-even odds are about ${Math.round(econ.breakEvenOdds * 100)}%: the launch only needs to be worth $${econ.breakEvenValue.toLocaleString('en-US')} for the farm to pay.`,
       cost: `the $${capital} stays in the position`,
       time: `${econ.holdDays} days`,
     },
@@ -657,7 +686,7 @@ export function buildBoard(snapshot: Snapshot, fit: CompsFit): BoardRow[] {
   const scored = [...chosen.values()].map((p) => {
     const sibling = isSiblingLinked(p, siblingWords);
     const v = impliedValue(p, snapshot.as_of, fit, sibling);
-    const econ = farmEconomics(p, v.implied, v.age);
+    const econ = farmEconomics(p, v.implied, v.age, fit.band);
     return { p, v, econ, sibling };
   });
   scored.sort((a, b) => b.v.implied - a.v.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
@@ -698,6 +727,9 @@ export function buildBoard(snapshot: Snapshot, fit: CompsFit): BoardRow[] {
       holdDays: s.econ.holdDays,
       chain: s.econ.chain,
       hours: Math.round(s.econ.hours * 100) / 100,
+      breakEvenValue: s.econ.breakEvenValue,
+      breakEvenOdds: Math.round(s.econ.breakEvenOdds * 10000) / 10000,
+      netAtP25: Math.round(s.econ.netAtP25 * 100) / 100,
     },
     farm_steps: farmSteps(s.p, s.econ, capitalFor(s.p)).map(stepText),
   }));
@@ -760,6 +792,9 @@ export function radarRow(row: BoardRow): RadarRow {
     verdict: row.farm.verdict,
     holdDays: row.farm.holdDays,
     chain: row.farm.chain,
+    breakEvenValue: row.farm.breakEvenValue,
+    breakEvenOdds: row.farm.breakEvenOdds,
+    netAtP25: row.farm.netAtP25,
     farm_steps: row.farm_steps,
   };
 }
@@ -771,7 +806,7 @@ export function buildRadar(snapshot: Snapshot, fit: CompsFit): { board: BoardRow
   const setaside = setAsideRows(snapshot);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
   const sibling = board.filter((r) => r.model.sibling_multiplier > 1).length;
-  const verdicts = { FARM: 0, THIN: 0, SKIP: 0 };
+  const verdicts = { ROBUST: 0, FARM: 0, THIN: 0, SKIP: 0 };
   for (const r of board) verdicts[r.farm.verdict]++;
   const bestPerHour = [...board]
     .sort((a, b) => b.farm.netPerHour - a.farm.netPerHour)
