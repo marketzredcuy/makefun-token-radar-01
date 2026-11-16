@@ -1,4 +1,4 @@
-// Launch Radar's dashboard (radar-comps-2). It reads window.RADAR (written beside
+// Launch Radar's dashboard (radar-comps-3). It reads window.RADAR (written beside
 // dashboard/ by main.ts) and renders the ranked board, a filterable table, a
 // per-protocol detail view with the model's own inputs and the protocol's farm plan,
 // and the scatter of the traded tokens the curve is fitted on. No network: every
@@ -104,7 +104,7 @@
         el('div', { class: 'stat' }, el('b', { text: String(DATA.board_size) }), el('span', { text: 'ranked, no token' })),
         el('div', { class: 'stat' }, el('b', { text: String(DATA.live_size) }), el('span', { text: 'token trades, kept apart' })),
         el('div', { class: 'stat' }, el('b', { text: String(DATA.setaside_size) }), el('span', { text: 'set aside by house rule' })),
-        el('div', { class: 'stat' }, el('b', { text: v.FARM + ' / ' + v.THIN + ' / ' + v.SKIP }), el('span', { text: 'farm / thin / skip at $1.0K' }))
+        el('div', { class: 'stat' }, el('b', { text: v.ROBUST + ' / ' + v.FARM + ' / ' + v.THIN + ' / ' + v.SKIP }), el('span', { text: 'robust / farm / thin / skip at $1.0K' }))
       )
     );
   }
@@ -131,7 +131,7 @@
       ),
       el('div', { class: 'judge-note' },
         el('b', { text: 'To the judge: ' }),
-        el('span', { text: 'this board is one function of the snapshot, fitted on its own 119 traded tokens and tested blind before a single row was ranked. Every value follows from the snapshot: size curve, category, 7-day growth, time with no token, and a sibling boost when the same team already launched a token. The page, the table and board.json all read the same numbers — check any row against its model line in the detail view, and check any farm plan against its own costs.' })
+        el('span', { text: 'this board is one function of the snapshot, fitted on its own 119 traded tokens and tested blind before a single row was ranked. Every value follows from the snapshot: size curve, category, 7-day growth, time with no token, and a sibling boost when the same team already launched a token. Every farm plan carries its break-even odds — the chance the launch is worth enough for the farm to pay, read off the band — and a farm that pays even at the band\'s low end is marked ROBUST. The page, the table and board.json all read the same numbers — check any row against its model line in the detail view, and check any farm plan against its own costs.' })
       )
     );
   }
@@ -214,6 +214,7 @@
       else if (key === 'age') { av = a.age_days === null ? Infinity : a.age_days; bv = b.age_days === null ? Infinity : b.age_days; }
       else if (key === 'slice') { av = a.slice1k; bv = b.slice1k; }
       else if (key === 'net') { av = a.netPerHour; bv = b.netPerHour; }
+      else if (key === 'odds') { av = a.breakEvenOdds; bv = b.breakEvenOdds; }
       else { av = a.implied_value_usd; bv = b.implied_value_usd; }
       if (av < bv) return -state.dir;
       if (av > bv) return state.dir;
@@ -249,7 +250,7 @@
     }
     var verdictSel = el('select', { id: 'verdict', 'aria-label': 'Filter by verdict' },
       el('option', { value: 'all', text: 'All' }),
-      ['FARM', 'THIN', 'SKIP'].map(function (o) { return el('option', { value: o, text: o, selected: o === state.verdict ? 'selected' : null }); })
+      ['ROBUST', 'FARM', 'THIN', 'SKIP'].map(function (o) { return el('option', { value: o, text: o, selected: o === state.verdict ? 'selected' : null }); })
     );
     verdictSel.addEventListener('change', function () { state.verdict = verdictSel.value; writeHash(); render(); });
     return el('div', { class: 'controls' },
@@ -334,6 +335,7 @@
           el('span', { class: 'verdict ' + r.verdict, text: r.verdict }),
           el('div', { class: 'netline ' + (r.net >= 0 ? 'pos' : 'neg'), text: fmtMoney(r.netPerHour) + '/h' })
         ),
+        el('td', { class: 'num', text: Math.round(r.breakEvenOdds * 100) + '%' }),
         el('td', null, el('div', { class: 'farmcell' },
           el('b', { text: farmCellText(r) }),
           el('span', { text: ' · ' + r.chain + ' · $' + r.gas.toFixed(2) + ' gas · ' + r.holdDays + 'd hold' })
@@ -344,7 +346,7 @@
     return el('div', { class: 'panel' },
       el('div', { class: 'table-wrap' },
         el('table', { class: 'board' },
-          el('caption', { text: 'Pre-token protocols, strongest implied value first. Bar: the implied value (dot) and its blind 25–75% band on a log scale. $1K slice: what $1,000 deposited would take if 10% of the launch went to depositors pro rata. Net: that slice minus gas and a 4% T-bill, per hands-on hour. Click a row for its full plan.' }),
+          el('caption', { text: 'Pre-token protocols, strongest implied value first. Bar: the implied value (dot) and its blind 25–75% band on a log scale. $1K slice: what $1,000 deposited would take if 10% of the launch went to depositors pro rata. Net: that slice minus gas and a 4% T-bill, per hands-on hour. Break-even odds: the chance the launch is worth enough for the farm to pay, read off the band. ROBUST pays even at the band\'s low end. Click a row for its full plan.' }),
           el('thead', null, el('tr', null,
             sortHeader('implied', 'Rank', true),
             sortHeader('name', 'Protocol'),
@@ -354,6 +356,7 @@
             sortHeader('implied', 'Implied value · P25 to P75'),
             sortHeader('slice', '$1K slice', true),
             sortHeader('net', 'Net of all costs', true),
+            sortHeader('odds', 'Break-even odds', true),
             el('th', { scope: 'col', text: 'Farm · fees · hold' })
           )),
           tbody
@@ -456,10 +459,10 @@
         el('tr', null, el('td', { text: 'Time split: fit ' + f.timeSplit.fitN + ' pre-2024, test ' + f.timeSplit.testN + ' newer' }), el('td', { text: fmtX(f.timeSplit.median) + ' (within 3x ' + Math.round(f.timeSplit.within3 * 100) + '%) vs flat ' + fmtX(f.timeSplit.flatMedian) })),
         el('tr', null, el('td', { text: 'Blind 25–75% band (leave-one-out residuals)' }), el('td', { text: fmtX(f.band.p25) + ' to ' + fmtX(f.band.p75) + ' of the point value' })),
         el('tr', null, el('td', { text: 'Blind 10–90% band' }), el('td', { text: fmtX(f.band.p10) + ' to ' + fmtX(f.band.p90) })),
-        el('tr', null, el('td', { text: 'Farm verdicts at a $1,000 slice' }), el('td', { text: DATA.verdicts.FARM + ' farm, ' + DATA.verdicts.THIN + ' thin, ' + DATA.verdicts.SKIP + ' skip' })),
+        el('tr', null, el('td', { text: 'Farm verdicts at a $1,000 slice' }), el('td', { text: DATA.verdicts.ROBUST + ' robust, ' + DATA.verdicts.FARM + ' farm, ' + DATA.verdicts.THIN + ' thin, ' + DATA.verdicts.SKIP + ' skip' })),
         el('tr', null, el('td', { text: 'Best net per hands-on hour' }), el('td', { text: DATA.bestPerHour.map(function (b) { return b.name + ' ' + fmtMoney(b.netPerHour) + '/h (' + b.verdict + ')'; }).join(' · ') }))
       )),
-      el('p', { class: 'sub', text: 'Farm economics: the $1,000 slice is $1,000 / TVL x 10% x implied value, the share of the launch a pro-rata depositor would take if 10% went to depositors. Gas is charged on the protocol\u2019s cheapest chain (Solana $0.10 a transaction, most Layer 2s $0.50, Ethereum $5), four transactions for setup, weekly actions and the claim. Opportunity cost is the $1,000 at a 4% T-bill for the hold. FARM means the slice beats gas plus the T-bill; THIN means it beats gas only; SKIP means gas eats the drop. Hold is 60 days for protocols under 180 days old or of unknown age, 45 days under a year, 30 days older. Hours are a quarter hour to set up plus ten minutes a week.' })
+      el('p', { class: 'sub', text: 'Farm economics: the $1,000 slice is $1,000 / TVL x 10% x implied value, the share of the launch a pro-rata depositor would take if 10% went to depositors. Gas is charged on the protocol\u2019s cheapest chain (Solana $0.10 a transaction, most Layer 2s $0.50, Ethereum $5), four transactions for setup, weekly actions and the claim. Opportunity cost is the $1,000 at a 4% T-bill for the hold. ROBUST means the slice beats gas plus the T-bill even at the band\u2019s low end (P25); FARM means it beats them at the median; THIN means it beats gas only; SKIP means gas eats the drop. Break-even odds are the chance the launch is worth at least the value the farm needs to pay, read off the band\u2019s own spread. Hold is 60 days for protocols under 180 days old or of unknown age, 45 days under a year, 30 days older. Hours are a quarter hour to set up plus ten minutes a week.' })
     );
   }
 
@@ -503,6 +506,9 @@
         el('div', null, el('span', { text: 'Gas, ' + row.chain + ' (4 tx)' }), el('b', { class: 'num', text: '$' + row.gas.toFixed(2) })),
         el('div', null, el('span', { text: 'T-bill opportunity, ' + row.holdDays + 'd' }), el('b', { class: 'num', text: '$' + row.oppCost.toFixed(2) })),
         el('div', null, el('span', { text: 'Net' }), el('b', { class: 'num ' + (row.net >= 0 ? 'pos' : 'neg'), text: fmtMoney(row.net) })),
+        el('div', null, el('span', { text: 'Net at the band\'s low end (P25)' }), el('b', { class: 'num ' + (row.netAtP25 >= 0 ? 'pos' : 'neg'), text: fmtMoney(row.netAtP25) })),
+        el('div', null, el('span', { text: 'Break-even value' }), el('b', { class: 'num', text: fmtUsd(row.breakEvenValue) })),
+        el('div', null, el('span', { text: 'Break-even odds' }), el('b', { class: 'num', text: Math.round(row.breakEvenOdds * 100) + '%' })),
         el('div', null, el('span', { text: 'Hours' }), el('b', { class: 'num', text: row.hours.toFixed(2) })),
         el('div', null, el('span', { text: 'Verdict' }), el('b', { class: 'verdict ' + row.verdict, text: row.verdict + ' · ' + fmtMoney(row.netPerHour) + '/h' }))
       )
