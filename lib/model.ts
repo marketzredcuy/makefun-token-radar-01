@@ -1,16 +1,18 @@
-// The token radar's model: radar-comps-1.
+// The token radar's model: radar-comps-2.
 //
 // One snapshot of the protocol universe in, one ranked board out. The value model is
 // fitted from the snapshot itself at runtime: a size curve over the traded tokens
 // (one record per token family), category effects shrunk toward zero, then a growth
-// prior and a seasoning prior. Nothing is a hardcoded list of names: the same
-// function scores every row, and the dashboard reports the fit's own out-of-sample
-// error next to the flat multiple it beats.
+// prior, a seasoning prior, and a sibling prior. Nothing is a hardcoded list of
+// names: the same function scores every row, and the dashboard reports the fit's own
+// out-of-sample error next to the flat multiple it beats.
 //
 //   log10(mcap) = a + b * log10(tvl) + category_effect     (fitted, OLS, comps)
-//   implied     = 10^(a + b*log10(tvl) + effect) * growth * seasoning
+//   implied     = 10^(a + b*log10(tvl) + effect) * growth * seasoning * sibling
 //   growth      = 1 + 0.75 * clamp(change_7d, -40, +60) / 100   (prior)
 //   seasoning   = 0.55 + 0.45 * min(age_days, 730) / 730         (prior, unknown age 365)
+//   sibling     = 1.30 when a protocol shares a distinctive name word with a token
+//                 that already trades (same team, one launch behind it), else 1.00 (prior)
 //
 // Farm economics are netted to the dollar on a $1,000 plan: the slice is what $1,000
 // deposited would take if 10% of the launch went to depositors pro rata; gas is
@@ -42,7 +44,11 @@ export interface Snapshot {
 }
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-comps-1';
+export const MODEL_VERSION = 'radar-comps-2';
+
+/** Sibling prior: a protocol that shares a distinctive name word with a token that
+ *  already trades gets a 1.30x multiplier — same team, one launch behind it. */
+export const SIBLING_MULT = 1.3;
 
 /** Shrinkage pseudo-count for category effects: a one-token category moves the
  *  curve by a ninth of its residual, a fifteen-token one by two thirds. */
@@ -147,6 +153,7 @@ export interface BoardRow {
     category_effect: number;
     growth_multiplier: number;
     maturity_multiplier: number;
+    sibling_multiplier: number;
     age_days: number | null;
   };
   band: { p25: number; p75: number };
@@ -172,6 +179,7 @@ export interface RadarRow {
   category_effect: number;
   growth_multiplier: number;
   maturity_multiplier: number;
+  sibling_multiplier: number;
   slice1k: number;
   gas: number;
   oppCost: number;
@@ -214,6 +222,7 @@ export interface RadarData {
   watchlist_size: number;
   board_size: number;
   early_size: number;
+  sibling_size: number;
   live_size: number;
   setaside_size: number;
   verdicts: { FARM: number; THIN: number; SKIP: number };
@@ -286,6 +295,49 @@ export function setAsideReason(p: SnapshotProtocol): string | null {
   if (WRAPPED_WORD.test(p.name)) return 'wrapped or staked product of a token that already trades';
   if (EXCHANGE_PREFIXES.some((x) => p.name.startsWith(x))) return 'an exchange product, not a protocol of its own';
   return null;
+}
+
+/** Generic words in a protocol name that say nothing about whose team it is. */
+const NAME_STOPWORDS = new Set([
+  'the', 'and', 'of', 'for', 'on', 'in', 'by', 'with', 'finance', 'financial', 'protocol', 'protocols',
+  'capital', 'labs', 'lab', 'network', 'chain', 'vault', 'vaults', 'fund', 'funds', 'dao', 'token',
+  'exchange', 'dex', 'defi', 'crypto', 'digital', 'global', 'international', 'group', 'holdings',
+  'ventures', 'assets', 'yield', 'staking', 'liquid', 'prime', 'alpha', 'beta', 'one', 'two', 'pro',
+  'plus', 'max', 'app', 'hub', 'market', 'markets', 'trade', 'trading', 'swap', 'pool', 'pools',
+  'farm', 'farms', 'earn', 'stake', 'mint', 'bridge', 'portal', 'platform', 'system', 'systems',
+  'tech', 'technology', 'solutions', 'services', 'pay', 'payments', 'credit', 'lending', 'borrow',
+  'savings', 'reserve', 'treasury', 'index', 'meta', 'super', 'hyper', 'ultra', 'nova', 'neo',
+  'zenith', 'apex', 'nexus', 'core', 'base', 'edge', 'link', 'node', 'block', 'coin', 'cash',
+  'stellar', 'ethereum', 'solana', 'bitcoin', 'polygon', 'arbitrum', 'optimism', 'avalanche',
+  'tron', 'bnb', 'sui', 'aptos', 'near', 'cosmos', 'injective', 'mantle', 'linea', 'scroll',
+  'zksync', 'starknet', 'blast', 'mode', 'fraxtal', 'berachain', 'monad', 'ink', 'unichain',
+  'world', 'celo', 'gnosis', 'fantom', 'cronos', 'kava', 'osmosis', 'celestia', 'sei', 'dymension',
+]);
+
+/** A name's distinctive words: lowercase, letters only, at least 4 characters, not a stopword. */
+export function nameWords(name: string): string[] {
+  return name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 4 && !NAME_STOPWORDS.has(w));
+}
+
+/** The distinctive name words of every protocol that already trades: the sibling pool. */
+export function buildSiblingWords(snapshot: Snapshot): Set<string> {
+  const words = new Set<string>();
+  for (const p of snapshot.protocols) {
+    if (isPreToken(p)) continue;
+    for (const w of nameWords(p.name)) words.add(w);
+  }
+  return words;
+}
+
+/** Whether a pre-token protocol shares a distinctive name word with a token that
+ *  already trades: same team, one launch behind it. Derived from the snapshot's own
+ *  names, never from a hand-written list. */
+export function isSiblingLinked(p: SnapshotProtocol, siblingWords: Set<string>): boolean {
+  if (!isPreToken(p)) return false;
+  return nameWords(p.name).some((w) => siblingWords.has(w));
 }
 
 /** The snapshot's protocol by slug. */
@@ -454,18 +506,19 @@ export function fitModel(snapshot: Snapshot): CompsFit {
   };
 }
 
-/** The three multipliers and the implied value one protocol gets under the fit. */
-export function impliedValue(p: SnapshotProtocol, asOf: string, fit: CompsFit): { implied: number; base: number; growthMult: number; maturityMult: number; age: number | null; catEffect: number } {
+/** The four multipliers and the implied value one protocol gets under the fit. */
+export function impliedValue(p: SnapshotProtocol, asOf: string, fit: CompsFit, sibling: boolean = false): { implied: number; base: number; growthMult: number; maturityMult: number; siblingMult: number; age: number | null; catEffect: number } {
   const age = ageDays(asOf, p.listed_at);
   const rawGrowth = finite(p.change_7d, 0);
   const growthPct = Math.min(GROWTH_CAP, Math.max(GROWTH_FLOOR, rawGrowth));
   const growthMult = 1 + (growthPct / 100) * GROWTH_WEIGHT;
   const ageForModel = age ?? UNKNOWN_AGE_DAYS;
   const maturityMult = SEASON_FLOOR + (Math.min(Math.max(ageForModel, 0), SEASON_DAYS) / SEASON_DAYS) * SEASON_RANGE;
+  const siblingMult = sibling ? SIBLING_MULT : 1;
   const catEffect = fit.effects[p.category ?? 'None'] ?? 0;
   const base = Math.pow(10, fit.a + fit.b * Math.log10(p.tvl_usd) + catEffect);
-  const implied = Math.max(1, Math.round(base * growthMult * maturityMult));
-  return { implied, base, growthMult, maturityMult, age, catEffect };
+  const implied = Math.max(1, Math.round(base * growthMult * maturityMult * siblingMult));
+  return { implied, base, growthMult, maturityMult, siblingMult, age, catEffect };
 }
 
 /** The protocol's cheapest chain to farm on, and its gas per transaction. */
@@ -546,6 +599,9 @@ function actionFor(p: SnapshotProtocol, capital: number, chain: string): string 
 export function farmSteps(p: SnapshotProtocol, econ: FarmEconomics, capital: number): FarmStep[] {
   const action = actionFor(p, capital, econ.chain);
   const gasEach = econ.gas / FARM_TXS;
+  const slice = econ.slice1k.toFixed(2);
+  const net = econ.net.toFixed(2);
+  const perHour = econ.netPerHour.toFixed(2);
   return [
     {
       text: `Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.`,
@@ -553,7 +609,7 @@ export function farmSteps(p: SnapshotProtocol, econ: FarmEconomics, capital: num
       time: '5 minutes',
     },
     {
-      text: action,
+      text: `${action} A $${capital} deposit takes about $${slice} if 10% of the launch goes to depositors pro rata.`,
       cost: `$${capital} of capital and about $${gasEach.toFixed(2)} of gas on ${econ.chain}`,
       time: '15 minutes to set up',
     },
@@ -563,7 +619,7 @@ export function farmSteps(p: SnapshotProtocol, econ: FarmEconomics, capital: num
       time: '10 minutes a week',
     },
     {
-      text: `Hold the position for at least ${econ.holdDays} days so the activity is counted in more than one snapshot.`,
+      text: `Hold the position for at least ${econ.holdDays} days so the activity is counted in more than one snapshot. At $${capital} the plan nets about $${net} after gas and a 4% T-bill, about $${perHour} an hour.`,
       cost: `the $${capital} stays in the position`,
       time: `${econ.holdDays} days`,
     },
@@ -597,10 +653,12 @@ export function buildBoard(snapshot: Snapshot, fit: CompsFit): BoardRow[] {
     .slice(0, Math.max(0, BOARD_ROWS - chosen.size));
   for (const p of early) chosen.set(p.slug, p);
 
+  const siblingWords = buildSiblingWords(snapshot);
   const scored = [...chosen.values()].map((p) => {
-    const v = impliedValue(p, snapshot.as_of, fit);
+    const sibling = isSiblingLinked(p, siblingWords);
+    const v = impliedValue(p, snapshot.as_of, fit, sibling);
     const econ = farmEconomics(p, v.implied, v.age);
-    return { p, v, econ };
+    return { p, v, econ, sibling };
   });
   scored.sort((a, b) => b.v.implied - a.v.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
   return scored.map((s, i) => ({
@@ -623,6 +681,7 @@ export function buildBoard(snapshot: Snapshot, fit: CompsFit): BoardRow[] {
       category_effect: Math.round(s.v.catEffect * 1e4) / 1e4,
       growth_multiplier: Math.round(s.v.growthMult * 1e4) / 1e4,
       maturity_multiplier: Math.round(s.v.maturityMult * 1e4) / 1e4,
+      sibling_multiplier: Math.round(s.v.siblingMult * 1e4) / 1e4,
       age_days: s.v.age,
     },
     band: {
@@ -691,6 +750,7 @@ export function radarRow(row: BoardRow): RadarRow {
     category_effect: row.model.category_effect,
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
+    sibling_multiplier: row.model.sibling_multiplier,
     slice1k: row.farm.slice1k,
     gas: row.farm.gas,
     oppCost: row.farm.oppCost,
@@ -710,6 +770,7 @@ export function buildRadar(snapshot: Snapshot, fit: CompsFit): { board: BoardRow
   const live = liveRows(snapshot);
   const setaside = setAsideRows(snapshot);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
+  const sibling = board.filter((r) => r.model.sibling_multiplier > 1).length;
   const verdicts = { FARM: 0, THIN: 0, SKIP: 0 };
   for (const r of board) verdicts[r.farm.verdict]++;
   const bestPerHour = [...board]
@@ -726,6 +787,7 @@ export function buildRadar(snapshot: Snapshot, fit: CompsFit): { board: BoardRow
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
     early_size: early,
+    sibling_size: sibling,
     live_size: live.length,
     setaside_size: setaside.length,
     verdicts,
