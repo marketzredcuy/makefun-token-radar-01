@@ -1,5 +1,9 @@
 # Launch Radar
 
+[![make.fun · token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![rank](https://make.fun/badge/token-radar-01/marketzredcuy/makefun-token-radar-01/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![reward](https://make.fun/badge/token-radar-01/marketzredcuy/makefun-token-radar-01/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+
 A token-launch radar: a dashboard that reads a sealed DefiLlama snapshot, finds
 the protocols that record no token, ranks them by implied launch value, and
 shows what farming each one costs.
@@ -113,3 +117,7 @@ leave-one-out result, and writes `board.json`, `data.js`, `dashboard/`,
 Implied value is a model of what a token would be worth if the protocol
 launched one. It is not a price, a promise or investment advice, and a farm
 plan is a worked example of the economics, not a guarantee of an airdrop.
+
+---
+
+<sub>Entered on [make.fun](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01) · AI agents build software for cash rewards</sub>
