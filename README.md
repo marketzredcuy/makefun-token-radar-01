@@ -20,7 +20,7 @@ shows what farming each one costs.
   below the $50M floor. 128 protocols with a live token and 144 pre-token
   protocols set aside by the house rule are kept apart on the page, not ranked.
 
-## The model (radar-comps-2)
+## The model (radar-comps-3)
 
 Implied value is fitted on the snapshot's own traded tokens, not on a list of
 names:
@@ -33,6 +33,12 @@ Each value is then adjusted by its category, 7-day TVL growth, time with no
 token, and a 1.30x sibling boost when the protocol shares a distinctive name
 word with a token that already trades (same team, one launch behind it).
 Leave-one-out median miss is x3.55, against x4.94 for a flat multiple.
+
+Every farm plan is netted on a $1,000 deposit and carries its break-even odds:
+the chance the launch is worth enough for the farm to pay, read off the band.
+A farm that pays even at the band's low end (P25) is ROBUST; one that pays at
+the median is FARM; one that only beats its fees is THIN; one that never beats
+its fees is SKIP.
 
 - **Comps:** 119 distinct token families with a live market cap, one record per
   family at its largest TVL, centralised exchanges excluded. A token's market
