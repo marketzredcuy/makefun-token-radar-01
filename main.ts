@@ -1,4 +1,4 @@
-// Launch Radar (radar-comps-2): a comps-fitted token launch radar (Node 22, stdlib only).
+// Launch Radar (radar-comps-3): a comps-fitted token launch radar (Node 22, stdlib only).
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>),
 // fits the size curve on the snapshot's own traded tokens, scores every pre-token
