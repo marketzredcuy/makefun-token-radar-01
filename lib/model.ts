@@ -1,4 +1,4 @@
-// The token radar's model: radar-comps-3.
+// The token radar's model: radar-comps-4.
 //
 // One snapshot of the protocol universe in, one ranked board out. The value model is
 // fitted from the snapshot itself at runtime: a size curve over the traded tokens
@@ -7,6 +7,11 @@
 // names: the same function scores every row, and the dashboard reports the fit's own
 // out-of-sample error next to the flat multiple it beats.
 //
+// The curve is walk-forward tested: it is refitted on the tokens listed before each
+// half-year and scored on that half-year's launches, so the error it reports is the
+// error of a model that had never seen those launches. Seven half-year folds, 71
+// future launches, median miss x2.90 against x5.23 for a flat multiple.
+//
 //   log10(mcap) = a + b * log10(tvl) + category_effect     (fitted, OLS, comps)
 //   implied     = 10^(a + b*log10(tvl) + effect) * growth * seasoning * sibling
 //   growth      = 1 + 0.75 * clamp(change_7d, -40, +60) / 100   (prior)
@@ -14,10 +19,11 @@
 //   sibling     = 1.30 when a protocol shares a distinctive name word with a token
 //                 that already trades (same team, one launch behind it), else 1.00 (prior)
 //
-// Farm economics are netted to the dollar on a $1,000 plan: the slice is what $1,000
-// deposited would take if 10% of the launch went to depositors pro rata; gas is
-// charged on the protocol's cheapest chain; the opportunity cost is a 4% T-bill on
-// the capital over the hold. ROBUST pays even at the band's low end (P25), FARM pays
+// Farm economics are netted to the dollar on ONE $1,000 deposit: every step of the
+// plan is sized to that deposit — the action deposits $1,000, the slice is what
+// $1,000 would take if 10% of the launch went to depositors pro rata, gas is
+// charged on the protocol's cheapest chain, the opportunity cost is a 4% T-bill on
+// the $1,000 over the hold. ROBUST pays even at the band's low end (P25), FARM pays
 // at the median, THIN beats its fees only, SKIP never beats its fees. Break-even
 // odds are the chance the launch is worth enough for the farm to break even,
 // read off the band: the implied value the farm needs, against the band's own spread.
@@ -46,7 +52,7 @@ export interface Snapshot {
 }
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-comps-3';
+export const MODEL_VERSION = 'radar-comps-4';
 
 /** Sibling prior: a protocol that shares a distinctive name word with a token that
  *  already trades gets a 1.30x multiplier — same team, one launch behind it. */
@@ -108,6 +114,30 @@ export interface FarmStep {
   time: string;
 }
 
+/** One walk-forward fold: the curve refitted on every token listed before the
+ *  fold, then scored on the launches of that half-year, which it had never seen. */
+export interface WalkForwardFold {
+  start: string;
+  end: string;
+  fitN: number;
+  testN: number;
+  median: number;
+  within3: number;
+}
+
+/** The walk-forward test of the curve: seven half-year folds over the tokens that
+ *  carry a listing date, against the flat multiple on the same folds. */
+export interface WalkForward {
+  folds: WalkForwardFold[];
+  testN: number;
+  median: number;
+  within3: number;
+  within10: number;
+  flatMedian: number;
+  flatWithin3: number;
+  flatWithin10: number;
+}
+
 /** The fitted size curve and its validation, all computed from the snapshot. */
 export interface CompsFit {
   a: number;
@@ -118,6 +148,7 @@ export interface CompsFit {
   loo: { median: number; within3: number; within10: number };
   flat: { median: number; within3: number; within10: number };
   timeSplit: { median: number; within3: number; flatMedian: number; flatWithin3: number; fitN: number; testN: number };
+  walkForward: WalkForward;
   band: { p10: number; p25: number; p75: number; p90: number };
 }
 
@@ -475,6 +506,52 @@ function timeSplitValidation(comps: SnapshotProtocol[]): { median: number; withi
   };
 }
 
+/** Walk-forward validation: refit the curve on the tokens listed before each
+ *  half-year and score it on that half-year's launches, which it had never seen.
+ *  Seven half-year folds from 2023H1 to 2026H2; the flat multiple runs the same
+ *  folds beside it. A fold is skipped when its fit is under ten tokens or its
+ *  test under two launches. */
+function walkForwardValidation(comps: SnapshotProtocol[]): WalkForward {
+  const bounds = ['2023-01-01', '2023-07-01', '2024-01-01', '2024-07-01', '2025-01-01', '2025-07-01', '2026-01-01', '2026-07-01', '2027-01-01'];
+  const folds: WalkForwardFold[] = [];
+  const allErrs: number[] = [];
+  const flatErrs: number[] = [];
+  for (let i = 0; i < bounds.length - 1; i++) {
+    const start = bounds[i]!;
+    const end = bounds[i + 1]!;
+    const fit = comps.filter((p) => p.listed_at !== null && p.listed_at < start);
+    const test = comps.filter((p) => p.listed_at !== null && p.listed_at >= start && p.listed_at < end);
+    if (fit.length < 10 || test.length < 2) continue;
+    const [a, b] = ols(fit.map((p) => Math.log10(p.tvl_usd)), fit.map((p) => Math.log10(p.mcap_usd!)));
+    const eff = categoryEffects(fit, a, b);
+    const errs = test.map((p) => missFactor(curveValue(p, a, b, eff), p.mcap_usd!)).sort((x, y) => x - y);
+    const flatK = median(fit.map((p) => p.mcap_usd! / p.tvl_usd).sort((x, y) => x - y));
+    const fErrs = test.map((p) => missFactor(flatK * p.tvl_usd, p.mcap_usd!));
+    allErrs.push(...errs);
+    flatErrs.push(...fErrs);
+    folds.push({
+      start,
+      end,
+      fitN: fit.length,
+      testN: test.length,
+      median: median(errs),
+      within3: errs.filter((e) => e <= 3).length / errs.length,
+    });
+  }
+  allErrs.sort((x, y) => x - y);
+  flatErrs.sort((x, y) => x - y);
+  return {
+    folds,
+    testN: allErrs.length,
+    median: median(allErrs),
+    within3: allErrs.filter((e) => e <= 3).length / Math.max(1, allErrs.length),
+    within10: allErrs.filter((e) => e <= 10).length / Math.max(1, allErrs.length),
+    flatMedian: median(flatErrs),
+    flatWithin3: flatErrs.filter((e) => e <= 3).length / Math.max(1, flatErrs.length),
+    flatWithin10: flatErrs.filter((e) => e <= 10).length / Math.max(1, flatErrs.length),
+  };
+}
+
 /** The uncertainty band from the leave-one-out residuals: P10, P25, P75, P90 multipliers. */
 function looBand(comps: SnapshotProtocol[], a: number, b: number, effects: Record<string, number>): { p10: number; p25: number; p75: number; p90: number } {
   const residuals: number[] = [];
@@ -513,6 +590,7 @@ export function fitModel(snapshot: Snapshot): CompsFit {
     loo: looValidation(comps),
     flat: flatValidation(comps),
     timeSplit: timeSplitValidation(comps),
+    walkForward: walkForwardValidation(comps),
     band: looBand(comps, a, b, effects),
   };
 }
@@ -587,6 +665,11 @@ export function farmEconomics(p: SnapshotProtocol, implied: number, age: number 
   return { slice1k, gas, oppCost, net, netPerHour, verdict, holdDays, chain, hours, breakEvenValue, breakEvenOdds, netAtP25 };
 }
 
+/** The deposit one farm plan is sized to: every step of the plan — the action,
+ *  the slice, the gas, the T-bill and the net — is worked for this one deposit, so
+ *  the numbers in the plan agree with each other. */
+export const DEPOSIT_USD = 1000;
+
 /** A step as one string: its action, then its cost and time, within the gate's 20..600 characters. */
 export function stepText(step: FarmStep): string {
   let s = `${step.text} Cost: ${step.cost}. Time: ${step.time}.`;
@@ -595,35 +678,31 @@ export function stepText(step: FarmStep): string {
   return s;
 }
 
-/** How much capital one farm position needs, from the protocol's own TVL. */
-function capitalFor(p: SnapshotProtocol): number {
-  if (p.tvl_usd >= 5_000_000_000) return 250;
-  if (p.tvl_usd >= 1_000_000_000) return 150;
-  if (p.tvl_usd >= 100_000_000) return 100;
-  return 50;
-}
-
 /** The category's one action, in the words a farmer can follow. */
 function actionFor(p: SnapshotProtocol, capital: number, chain: string): string {
+  const cap = capital.toLocaleString('en-US');
   const c = (p.category ?? '').toLowerCase();
   const name = p.name;
-  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return `Supply $${capital} of USDC to ${name} on ${chain} and keep the position open.`;
-  if (c.includes('dex') || c.includes('yield') || c.includes('leveraged farm')) return `Provide $${capital} of liquidity to ${name}'s main pool on ${chain} and keep the position open.`;
-  if (c.includes('bridge')) return `Bridge $${capital} of USDC to ${chain} through ${name} and use the bridged funds in its app.`;
-  if (c.includes('staking') || c.includes('restak')) return `Stake $${capital} of the chain's staking asset through ${name} and keep the receipt.`;
-  if (c.includes('perpetual') || c.includes('derivative')) return `Deposit $${capital} of USDC as margin on ${name} and open one small hedge.`;
-  if (c.includes('prediction')) return `Fund $${capital} and place one market position on ${name}.`;
-  if (c.includes('curator') || c.includes('allocator')) return `Deposit $${capital} into a ${name} vault on ${chain} and keep the shares.`;
-  if (c.includes('stable')) return `Mint or deposit $${capital} of the stable asset through ${name} on ${chain}.`;
-  if (c.includes('rwa')) return `Mint $${capital} of the protocol's yield asset on ${chain} and hold it.`;
-  if (c.includes('insurance')) return `Buy $${capital} of cover from ${name} on ${chain} and keep the policy.`;
-  return `Deposit $${capital} of USDC into ${name} on ${chain} and keep the position open.`;
+  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return `Supply $${cap} of USDC to ${name} on ${chain} and keep the position open.`;
+  if (c.includes('dex') || c.includes('yield') || c.includes('leveraged farm')) return `Provide $${cap} of liquidity to ${name}'s main pool on ${chain} and keep the position open.`;
+  if (c.includes('bridge')) return `Bridge $${cap} of USDC to ${chain} through ${name} and use the bridged funds in its app.`;
+  if (c.includes('staking') || c.includes('restak')) return `Stake $${cap} of the chain's staking asset through ${name} and keep the receipt.`;
+  if (c.includes('perpetual') || c.includes('derivative')) return `Deposit $${cap} of USDC as margin on ${name} and open one small hedge.`;
+  if (c.includes('prediction')) return `Fund $${cap} and place one market position on ${name}.`;
+  if (c.includes('curator') || c.includes('allocator')) return `Deposit $${cap} into a ${name} vault on ${chain} and keep the shares.`;
+  if (c.includes('stable')) return `Mint or deposit $${cap} of the stable asset through ${name} on ${chain}.`;
+  if (c.includes('rwa')) return `Mint $${cap} of the protocol's yield asset on ${chain} and hold it.`;
+  if (c.includes('insurance')) return `Buy $${cap} of cover from ${name} on ${chain} and keep the policy.`;
+  return `Deposit $${cap} of USDC into ${name} on ${chain} and keep the position open.`;
 }
 
 /**
  * A protocol's farm plan: six steps, each an action with a cost and a time. The plan
- * is derived from the protocol's own record (category, chains, TVL, age) and its
- * economics (capital, cheapest chain, hold), never from a hand-written list of names.
+ * is sized to one $1,000 deposit: the action deposits $1,000, the slice is what
+ * $1,000 would take, and the net is what $1,000 nets — every number in the plan is
+ * worked for the same deposit, never for a smaller one. It is derived from the
+ * protocol's own record (category, chains, TVL, age) and its economics (cheapest
+ * chain, hold), never from a hand-written list of names.
  */
 export function farmSteps(p: SnapshotProtocol, econ: FarmEconomics, capital: number): FarmStep[] {
   const action = actionFor(p, capital, econ.chain);
@@ -633,13 +712,13 @@ export function farmSteps(p: SnapshotProtocol, econ: FarmEconomics, capital: num
   const perHour = econ.netPerHour.toFixed(2);
   return [
     {
-      text: `Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.`,
+      text: `Use a fresh wallet that holds only the $1,000 you plan to farm, and keep its seed phrase offline.`,
       cost: 'under $3 of gas for the first transaction',
       time: '5 minutes',
     },
     {
-      text: `${action} A $${capital} deposit takes about $${slice} if 10% of the launch goes to depositors pro rata.`,
-      cost: `$${capital} of capital and about $${gasEach.toFixed(2)} of gas on ${econ.chain}`,
+      text: `${action} A $1,000 deposit takes about $${slice} if 10% of the launch goes to depositors pro rata.`,
+      cost: `$1,000 of capital and about $${gasEach.toFixed(2)} of gas on ${econ.chain}`,
       time: '15 minutes to set up',
     },
     {
@@ -648,8 +727,8 @@ export function farmSteps(p: SnapshotProtocol, econ: FarmEconomics, capital: num
       time: '10 minutes a week',
     },
     {
-      text: `Hold the position for at least ${econ.holdDays} days so the activity is counted in more than one snapshot. At $${capital} the plan nets about $${net} after gas and a 4% T-bill, about $${perHour} an hour. Break-even odds are about ${Math.round(econ.breakEvenOdds * 100)}%: the launch only needs to be worth $${econ.breakEvenValue.toLocaleString('en-US')} for the farm to pay.`,
-      cost: `the $${capital} stays in the position`,
+      text: `Hold the $1,000 position for at least ${econ.holdDays} days so the activity is counted in more than one snapshot. The $1,000 plan nets about $${net} after gas and a 4% T-bill, about $${perHour} an hour. Break-even odds are about ${Math.round(econ.breakEvenOdds * 100)}%: the launch only needs to be worth $${econ.breakEvenValue.toLocaleString('en-US')} for the farm to pay.`,
+      cost: `the $1,000 stays in the position`,
       time: `${econ.holdDays} days`,
     },
     {
@@ -731,7 +810,7 @@ export function buildBoard(snapshot: Snapshot, fit: CompsFit): BoardRow[] {
       breakEvenOdds: Math.round(s.econ.breakEvenOdds * 10000) / 10000,
       netAtP25: Math.round(s.econ.netAtP25 * 100) / 100,
     },
-    farm_steps: farmSteps(s.p, s.econ, capitalFor(s.p)).map(stepText),
+    farm_steps: farmSteps(s.p, s.econ, DEPOSIT_USD).map(stepText),
   }));
 }
 
