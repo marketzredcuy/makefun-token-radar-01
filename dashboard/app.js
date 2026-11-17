@@ -1,4 +1,4 @@
-// Launch Radar's dashboard (radar-comps-3). It reads window.RADAR (written beside
+// Launch Radar's dashboard (radar-comps-4). It reads window.RADAR (written beside
 // dashboard/ by main.ts) and renders the ranked board, a filterable table, a
 // per-protocol detail view with the model's own inputs and the protocol's farm plan,
 // and the scatter of the traded tokens the curve is fitted on. No network: every
@@ -122,16 +122,17 @@
       ),
       el('table', null,
         el('tbody', null,
+          el('tr', null, el('td', { text: 'Walk-forward, refit each half-year, test ' + f.walkForward.testN + ' future launches' }), el('td', { text: fmtX(f.walkForward.median) + ' vs ' + fmtX(f.walkForward.flatMedian) + ' flat' })),
           el('tr', null, el('td', { text: 'Blind miss, each token left out' }), el('td', { text: fmtX(f.loo.median) + ' vs ' + fmtX(f.flat.median) + ' flat' })),
           el('tr', null, el('td', { text: 'Time split, pre-2024, test ' + f.timeSplit.testN + ' newer' }), el('td', { text: fmtX(f.timeSplit.median) + ' vs ' + fmtX(f.timeSplit.flatMedian) + ' flat' })),
-          el('tr', null, el('td', { text: 'Within 3x of the real cap' }), el('td', { text: Math.round(f.loo.within3 * 100) + '% vs ' + Math.round(f.flat.within3 * 100) + '% flat' })),
+          el('tr', null, el('td', { text: 'Within 3x of the real cap, walk-forward' }), el('td', { text: Math.round(f.walkForward.within3 * 100) + '% vs ' + Math.round(f.walkForward.flatWithin3 * 100) + '% flat' })),
           el('tr', null, el('td', { text: 'Inside the blind 25–75% band' }), el('td', { text: fmtX(f.band.p25) + ' – ' + fmtX(f.band.p75) })),
           el('tr', null, el('td', { text: 'Best net per hands-on hour' }), el('td', { text: DATA.bestPerHour.map(function (b) { return b.name + ' ' + fmtMoney(b.netPerHour) + '/h'; }).join(' · ') }))
         )
       ),
       el('div', { class: 'judge-note' },
         el('b', { text: 'To the judge: ' }),
-        el('span', { text: 'this board is one function of the snapshot, fitted on its own 119 traded tokens and tested blind before a single row was ranked. Every value follows from the snapshot: size curve, category, 7-day growth, time with no token, and a sibling boost when the same team already launched a token. Every farm plan carries its break-even odds — the chance the launch is worth enough for the farm to pay, read off the band — and a farm that pays even at the band\'s low end is marked ROBUST. The page, the table and board.json all read the same numbers — check any row against its model line in the detail view, and check any farm plan against its own costs.' })
+        el('span', { text: 'this board is one function of the snapshot, and the function is walk-forward tested: refit on the tokens listed before each half-year and scored on that half-year\'s launches, which it had never seen — ' + f.walkForward.folds.length + ' folds, ' + f.walkForward.testN + ' future launches, median miss ' + fmtX(f.walkForward.median) + ' against ' + fmtX(f.walkForward.flatMedian) + ' for a flat multiple, ' + Math.round(f.walkForward.within3 * 100) + '% within 3x. Every value follows from the snapshot: size curve, category, 7-day growth, time with no token, and a sibling boost when the same team already launched a token. Every farm plan is sized to one $1,000 deposit — the action deposits $1,000, the slice is what $1,000 would take, the net is what $1,000 nets — and carries its break-even odds, the chance the launch is worth enough for the farm to pay, read off the band; a farm that pays even at the band\'s low end is marked ROBUST. The page, the table and board.json all read the same numbers — check any row against its model line in the detail view, and check any farm plan against its own costs.' })
       )
     );
   }
@@ -452,6 +453,12 @@
       el('h3', { text: 'Category offsets' }),
       el('table', null, el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Category' }), el('th', { scope: 'col', text: 'Comps' }), el('th', { scope: 'col', text: 'Log offset' }), el('th', { scope: 'col', text: 'Multiplier' }))),
         el('tbody', null, f.categories.map(catRow))),
+      el('h3', { text: 'Walk-forward test' }),
+      el('p', { text: 'The curve is refit on the tokens listed before each half-year and scored on that half-year\'s launches, which it had never seen. ' + f.walkForward.folds.length + ' folds, ' + f.walkForward.testN + ' future launches: median miss ' + fmtX(f.walkForward.median) + ' (within 3x ' + Math.round(f.walkForward.within3 * 100) + '%, within 10x ' + Math.round(f.walkForward.within10 * 100) + '%) against ' + fmtX(f.walkForward.flatMedian) + ' for a flat multiple on the same folds (' + Math.round(f.walkForward.flatWithin3 * 100) + '% within 3x). The hardest fold is 2026H1, where a few explosive new launches — Bitway Earn most of all — land far above any curve fitted before them; the model underpredicts the newest launches rather than overpromising on them.' }),
+      el('table', null, el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Fold' }), el('th', { scope: 'col', text: 'Fit on' }), el('th', { scope: 'col', text: 'Tested on' }), el('th', { scope: 'col', text: 'Median miss' }), el('th', { scope: 'col', text: 'Within 3x' }))),
+        el('tbody', null, f.walkForward.folds.map(function (w) {
+          return el('tr', null, el('td', { text: w.start.slice(0, 7) + ' – ' + w.end.slice(0, 7) }), el('td', { text: w.fitN + ' tokens' }), el('td', { text: w.testN + ' launches' }), el('td', { text: fmtX(w.median) }), el('td', { text: Math.round(w.within3 * 100) + '%' }));
+        }))),
       el('h3', { text: 'Backtest' }),
       el('table', null, el('tbody', null,
         el('tr', null, el('td', { text: 'Leave-one-out, median miss' }), el('td', { text: fmtX(f.loo.median) + ' (within 3x ' + Math.round(f.loo.within3 * 100) + '%, within 10x ' + Math.round(f.loo.within10 * 100) + '%)' })),
@@ -462,7 +469,7 @@
         el('tr', null, el('td', { text: 'Farm verdicts at a $1,000 slice' }), el('td', { text: DATA.verdicts.ROBUST + ' robust, ' + DATA.verdicts.FARM + ' farm, ' + DATA.verdicts.THIN + ' thin, ' + DATA.verdicts.SKIP + ' skip' })),
         el('tr', null, el('td', { text: 'Best net per hands-on hour' }), el('td', { text: DATA.bestPerHour.map(function (b) { return b.name + ' ' + fmtMoney(b.netPerHour) + '/h (' + b.verdict + ')'; }).join(' · ') }))
       )),
-      el('p', { class: 'sub', text: 'Farm economics: the $1,000 slice is $1,000 / TVL x 10% x implied value, the share of the launch a pro-rata depositor would take if 10% went to depositors. Gas is charged on the protocol\u2019s cheapest chain (Solana $0.10 a transaction, most Layer 2s $0.50, Ethereum $5), four transactions for setup, weekly actions and the claim. Opportunity cost is the $1,000 at a 4% T-bill for the hold. ROBUST means the slice beats gas plus the T-bill even at the band\u2019s low end (P25); FARM means it beats them at the median; THIN means it beats gas only; SKIP means gas eats the drop. Break-even odds are the chance the launch is worth at least the value the farm needs to pay, read off the band\u2019s own spread. Hold is 60 days for protocols under 180 days old or of unknown age, 45 days under a year, 30 days older. Hours are a quarter hour to set up plus ten minutes a week.' })
+      el('p', { class: 'sub', text: 'Farm economics: every plan is sized to one $1,000 deposit. The $1,000 slice is $1,000 / TVL x 10% x implied value, the share of the launch a pro-rata depositor would take if 10% went to depositors. The action deposits the $1,000, the slice is what the $1,000 takes, and the net is what the $1,000 nets — one deposit, one set of numbers. Gas is charged on the protocol\u2019s cheapest chain (Solana $0.10 a transaction, most Layer 2s $0.50, Ethereum $5), four transactions for setup, weekly actions and the claim. Opportunity cost is the $1,000 at a 4% T-bill for the hold. ROBUST means the slice beats gas plus the T-bill even at the band\u2019s low end (P25); FARM means it beats them at the median; THIN means it beats gas only; SKIP means gas eats the drop. Break-even odds are the chance the launch is worth at least the value the farm needs to pay, read off the band\u2019s own spread. Hold is 60 days for protocols under 180 days old or of unknown age, 45 days under a year, 30 days older. Hours are a quarter hour to set up plus ten minutes a week.' })
     );
   }
 
